@@ -304,16 +304,19 @@ def perform_app_update(
     """
     อัปเดตแอปพลิเคชันโดยใช้ Swap & Restart Strategy
     
+    🆕 v3.2: รองรับทั้ง:
+    - Raw .exe file (backward compatible)
+    - ZIP Package (exe + asset folders)
+    
     Windows ไม่อนุญาตให้ลบ/เขียนทับไฟล์ .exe ที่กำลังทำงาน
     ดังนั้นต้องใช้ batch script ที่จะ:
     1. รอให้แอปปิด
-    2. เปลี่ยนชื่อ/ลบไฟล์เก่า
-    3. ย้ายไฟล์ใหม่มาแทน
-    4. เปิดแอปใหม่
-    5. ลบ batch script ตัวเอง
+    2. Copy/แทนที่ไฟล์ทั้งหมด
+    3. เปิดแอปใหม่
+    4. ลบ batch script ตัวเอง
     
     Args:
-        download_url: URL สำหรับดาวน์โหลด .exe ใหม่
+        download_url: URL สำหรับดาวน์โหลด (.exe หรือ .zip)
         app_path: Path ของ .exe ปัจจุบัน
         progress_callback: func(label, pct)
         log_callback: func(message, level)
@@ -321,6 +324,9 @@ def perform_app_update(
     Returns:
         UpdateResult ที่มี requires_restart=True ถ้าสำเร็จ
     """
+    import zipfile
+    import shutil
+    
     def report_progress(label: str, pct: float):
         if progress_callback:
             progress_callback(label, pct)
@@ -331,12 +337,13 @@ def perform_app_update(
     
     app_dir = os.path.dirname(app_path)
     app_name = os.path.basename(app_path)
-    new_app_path = os.path.join(app_dir, "app.new.exe")
+    download_temp = os.path.join(app_dir, "_update_download.tmp")
+    extract_dir = os.path.join(app_dir, "_update_extract")
     batch_path = os.path.join(app_dir, "update.bat")
     
     try:
         # ═══════════════════════════════════════════════════════════════════
-        # STEP 1: ดาวน์โหลดไฟล์ใหม่
+        # STEP 1: ดาวน์โหลดไฟล์
         # ═══════════════════════════════════════════════════════════════════
         log("📥 กำลังดาวน์โหลดเวอร์ชันใหม่...", "INFO")
         report_progress("กำลังดาวน์โหลด...", 10.0)
@@ -347,32 +354,135 @@ def perform_app_update(
         total_size = int(response.headers.get('content-length', 0))
         downloaded = 0
         
-        with open(new_app_path, 'wb') as f:
+        with open(download_temp, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
                 downloaded += len(chunk)
                 if total_size > 0:
-                    pct = 10.0 + (downloaded / total_size) * 60.0
+                    pct = 10.0 + (downloaded / total_size) * 50.0
                     report_progress(f"ดาวน์โหลด... {downloaded // (1024*1024)} MB", pct)
         
         log(f"✓ ดาวน์โหลดเสร็จ: {downloaded} bytes", "INFO")
         
         # ═══════════════════════════════════════════════════════════════════
-        # STEP 2: ตรวจสอบไฟล์
+        # STEP 2: ตรวจสอบประเภทไฟล์ (ZIP หรือ EXE)
         # ═══════════════════════════════════════════════════════════════════
-        report_progress("ตรวจสอบไฟล์...", 75.0)
+        report_progress("ตรวจสอบไฟล์...", 65.0)
         
-        if os.path.getsize(new_app_path) < 10000:
-            raise UpdateError("ไฟล์ที่ดาวน์โหลดเสียหาย")
+        is_zip = zipfile.is_zipfile(download_temp)
+        log(f"   • ประเภทไฟล์: {'ZIP Package' if is_zip else 'Raw EXE'}", "INFO")
         
-        # ═══════════════════════════════════════════════════════════════════
-        # STEP 3: สร้าง Batch Script สำหรับ Swap
-        # ═══════════════════════════════════════════════════════════════════
-        report_progress("เตรียมการติดตั้ง...", 85.0)
-        log("📝 สร้าง update script...", "INFO")
-        
-        # Batch script content
-        batch_content = f'''@echo off
+        if is_zip:
+            # ═══════════════════════════════════════════════════════════════
+            # ZIP PACKAGE MODE
+            # ═══════════════════════════════════════════════════════════════
+            report_progress("แตกไฟล์ ZIP...", 70.0)
+            log("📦 กำลังแตกไฟล์ ZIP Package...", "INFO")
+            
+            # Clean up old extract dir
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir, ignore_errors=True)
+            os.makedirs(extract_dir, exist_ok=True)
+            
+            # Extract ZIP
+            with zipfile.ZipFile(download_temp, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            
+            # Find the exe file in extracted content
+            exe_found = None
+            for root, dirs, files in os.walk(extract_dir):
+                for f in files:
+                    if f.lower().endswith('.exe') and 'infinity' in f.lower():
+                        exe_found = os.path.join(root, f)
+                        break
+                if exe_found:
+                    break
+            
+            if not exe_found:
+                # Try to find any .exe
+                for root, dirs, files in os.walk(extract_dir):
+                    for f in files:
+                        if f.lower().endswith('.exe'):
+                            exe_found = os.path.join(root, f)
+                            break
+                    if exe_found:
+                        break
+            
+            if not exe_found:
+                raise UpdateError("ไม่พบไฟล์ .exe ใน ZIP Package")
+            
+            # Get the source directory (parent of exe or extract_dir itself)
+            source_dir = os.path.dirname(exe_found) if os.path.dirname(exe_found) != extract_dir else extract_dir
+            log(f"   • พบ EXE: {os.path.basename(exe_found)}", "INFO")
+            
+            # Create batch script for directory merge
+            report_progress("เตรียมการติดตั้ง...", 85.0)
+            log("📝 สร้าง update script (Directory Merge)...", "INFO")
+            
+            batch_content = f'''@echo off
+chcp 65001 >nul
+echo ══════════════════════════════════════════
+echo   Infinity Downloader - Auto Update
+echo ══════════════════════════════════════════
+echo.
+
+:: รอให้แอปเดิมปิด (3 วินาที)
+echo [1/4] รอให้โปรแกรมปิด...
+timeout /t 3 /nobreak >nul
+
+:: พยายาม kill process
+taskkill /f /im "{app_name}" 2>nul
+timeout /t 2 /nobreak >nul
+
+:: Copy ไฟล์ทั้งหมดมาแทน (robocopy /MIR จะ merge ได้ดี)
+echo [2/4] ติดตั้งไฟล์ใหม่...
+robocopy "{source_dir}" "{app_dir}" /E /NFL /NDL /NJH /NJS /nc /ns /np 2>nul
+if errorlevel 8 (
+    :: ถ้า robocopy ล้มเหลว ลองใช้ xcopy
+    xcopy /s /e /y /q "{source_dir}\\*" "{app_dir}\\" 2>nul
+)
+
+:: ลบโฟลเดอร์ extract
+echo [3/4] ทำความสะอาด...
+rmdir /s /q "{extract_dir}" 2>nul
+del /f /q "{download_temp}" 2>nul
+
+:: ตรวจสอบและเปิดโปรแกรม
+echo [4/4] เปิดโปรแกรม...
+if exist "{app_path}" (
+    echo.
+    echo ════════════════════════════════════════
+    echo   ติดตั้งสำเร็จ! กำลังเปิดโปรแกรม...
+    echo ════════════════════════════════════════
+    timeout /t 2 /nobreak >nul
+    start "" "{app_path}" --post-update
+) else (
+    echo.
+    echo เกิดข้อผิดพลาดในการติดตั้ง
+    pause
+)
+
+:: ลบ batch script ตัวเอง
+(goto) 2>nul & del "%~f0"
+'''
+        else:
+            # ═══════════════════════════════════════════════════════════════
+            # RAW EXE MODE (Backward Compatible)
+            # ═══════════════════════════════════════════════════════════════
+            new_app_path = os.path.join(app_dir, "app.new.exe")
+            
+            # Rename temp to new exe
+            if os.path.exists(new_app_path):
+                os.remove(new_app_path)
+            os.rename(download_temp, new_app_path)
+            
+            if os.path.getsize(new_app_path) < 10000:
+                raise UpdateError("ไฟล์ที่ดาวน์โหลดเสียหาย")
+            
+            report_progress("เตรียมการติดตั้ง...", 85.0)
+            log("📝 สร้าง update script (Single EXE)...", "INFO")
+            
+            batch_content = f'''@echo off
 chcp 65001 >nul
 echo กำลังอัปเดต... กรุณารอสักครู่
 echo.
@@ -412,11 +522,12 @@ if exist "{app_path}" (
 (goto) 2>nul & del "%~f0"
 '''
         
+        # Write batch script
         with open(batch_path, 'w', encoding='utf-8') as f:
             f.write(batch_content)
         
         # ═══════════════════════════════════════════════════════════════════
-        # STEP 4: Execute Batch Script
+        # STEP 3: Execute Batch Script
         # ═══════════════════════════════════════════════════════════════════
         report_progress("เริ่มการติดตั้ง...", 95.0)
         log("🚀 เริ่ม update script - โปรแกรมจะปิดและเปิดใหม่อัตโนมัติ", "INFO")
@@ -444,8 +555,10 @@ if exist "{app_path}" (
         
         # Cleanup
         try:
-            if os.path.exists(new_app_path):
-                os.remove(new_app_path)
+            if os.path.exists(download_temp):
+                os.remove(download_temp)
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir, ignore_errors=True)
             if os.path.exists(batch_path):
                 os.remove(batch_path)
         except:
