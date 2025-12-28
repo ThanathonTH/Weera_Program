@@ -1002,13 +1002,20 @@ class InfinityMP3Downloader(ctk.CTk):
                 # Production Mode (.exe)
                 app_path = sys.executable
                 skip_app_update = False
-                self.log("🏭 Running in Production Mode (.exe)", "INFO")
+                self.log("🏭 Production Mode: Running as compiled .exe", "INFO")
             else:
                 # Developer Mode (.py)
                 app_path = os.path.join(BASE_DIR, "main.exe")
                 skip_app_update = True
-                self.log("⚠️ Developer Mode: รันจาก .py - ข้าม App Self-Update", "WARNING")
-                self.log("   (จะตรวจสอบเฉพาะ yt-dlp เท่านั้น)", "INFO")
+                self.log("━" * 50, "INFO")
+                self.log("🛠️ DEV MODE: Skipping App Self-Update (Safety Protocol)", "WARNING")
+                self.log("   • รันจากซอร์สโค้ด .py", "INFO")
+                self.log("   • ข้าม App Self-Update เพื่อป้องกันไฟล์เสียหาย", "INFO")
+                self.log("   • จะตรวจสอบเฉพาะ yt-dlp เท่านั้น", "INFO")
+                self.log("━" * 50, "INFO")
+                # Small delay so user can read the message
+                import time
+                time.sleep(1)
             
             self.log(f"📌 App Version: {APP_VERSION}", "INFO")
             

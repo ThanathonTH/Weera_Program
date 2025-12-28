@@ -122,7 +122,7 @@ def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
         ytdlp_path: Path ไปยัง yt-dlp.exe
     
     Returns:
-        str: เวอร์ชัน (e.g., "2023.11.16") หรือ None ถ้าไม่พบ
+        str: เวอร์ชัน (e.g., "2023.11.16") หรือ None ถ้าไม่พบ/เช็คไม่ได้
     """
     if not os.path.exists(ytdlp_path):
         print(f"[DEBUG] yt-dlp not found at: {ytdlp_path}")
@@ -133,24 +133,24 @@ def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
             [ytdlp_path, "--version"],
             capture_output=True,
             text=True,
-            encoding='utf-8',  # ✅ Explicit encoding
-            errors='replace',   # ✅ Handle encoding errors gracefully
-            timeout=15,         # ✅ Increased timeout
+            encoding='utf-8',
+            errors='ignore',  # ✅ Ignore encoding errors for non-English systems
+            timeout=15,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
+        
+        # Debug: show raw output
+        print(f"[DEBUG] yt-dlp --version stdout: '{result.stdout.strip()}'")
         
         if result.returncode == 0:
             version = result.stdout.strip()
             if version:
-                print(f"[DEBUG] Local yt-dlp version: {version}")
                 return version
             else:
                 print(f"[DEBUG] yt-dlp returned empty version")
                 return None
         else:
             print(f"[DEBUG] yt-dlp --version failed: return code {result.returncode}")
-            if result.stderr:
-                print(f"[DEBUG] stderr: {result.stderr.strip()}")
             return None
         
     except subprocess.TimeoutExpired:
@@ -585,48 +585,62 @@ def update_ytdlp(
     report("ตรวจสอบเวอร์ชัน...", 5.0)
     log("🔍 กำลังตรวจสอบเวอร์ชัน yt-dlp...", "INFO")
     
+    # Check file existence FIRST (separate from version check)
+    file_exists = os.path.exists(ytdlp_path)
     local_ver = get_local_ytdlp_version(ytdlp_path)
     remote_info = get_remote_ytdlp_version()
     
+    # Log local status
     if local_ver:
         log(f"   • เวอร์ชันในเครื่อง: {local_ver}", "INFO")
+    elif file_exists:
+        log("   • ⚠️ ไฟล์มีอยู่แต่เช็คเวอร์ชันไม่ได้ (สมมติว่าใช้งานได้)", "WARNING")
     else:
         log("   • ยังไม่มี yt-dlp ในเครื่อง", "INFO")
     
+    # Log remote status
     if remote_info:
         log(f"   • เวอร์ชันล่าสุด: {remote_info.version}", "INFO")
     else:
-        log("   • ไม่สามารถเช็คเวอร์ชันล่าสุดได้ (API Error)", "WARNING")
-        if not force:
-            # ถ้าเช็คไม่ได้และไม่ได้บังคับ ให้ข้ามไป
-            if local_ver:
-                log("   • ข้าม update (มี yt-dlp อยู่แล้ว)", "INFO")
-                report("✅ ใช้เวอร์ชันปัจจุบัน", 100.0)
-                return True
-            # ถ้าไม่มี yt-dlp เลย ต้องโหลดแบบ blind
-            log("   • บังคับดาวน์โหลด (ไม่มีไฟล์จึงจำเป็นต้องโหลด)", "WARNING")
+        log("   • ⚠️ ไม่สามารถเช็คเวอร์ชันล่าสุดได้ (API Error/Rate Limit)", "WARNING")
     
     # ═══════════════════════════════════════════════════════════════════════
-    # STEP 2: เปรียบเทียบเวอร์ชัน
+    # STEP 2: ตัดสินใจว่าต้อง update หรือไม่
     # ═══════════════════════════════════════════════════════════════════════
     needs_update = False
     download_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
     
-    if not local_ver:
-        # ไม่มีไฟล์ -> ต้องโหลด
+    # Case 1: No file at all -> Must download
+    if not file_exists:
         needs_update = True
+        log("   • ต้องดาวน์โหลด (ไม่มีไฟล์)", "INFO")
+    
+    # Case 2: Force update requested
     elif force:
-        # บังคับโหลด
         needs_update = True
         log("   • บังคับอัปเดตตามที่ร้องขอ", "INFO")
-    elif remote_info:
+    
+    # Case 3: API failed but file exists -> KEEP existing (NO blind update)
+    elif not remote_info and file_exists:
+        log("   • ✅ ใช้เวอร์ชันปัจจุบัน (ไม่สามารถเช็ค update ได้)", "SUCCESS")
+        report("✅ ใช้เวอร์ชันปัจจุบัน", 100.0)
+        return True
+    
+    # Case 4: Version check failed but file exists -> Assume valid (NO blind update)
+    elif not local_ver and file_exists and not force:
+        log("   • ✅ ข้าม update (เช็คเวอร์ชันไม่ได้แต่ไฟล์มีอยู่)", "SUCCESS")
+        report("✅ ใช้ไฟล์ปัจจุบัน", 100.0)
+        return True
+    
+    # Case 5: Have both versions -> Compare
+    elif local_ver and remote_info:
         comparison = compare_versions(local_ver, remote_info.version)
         if comparison < 0:
             needs_update = True
             download_url = remote_info.download_url
-            log(f"   • พบเวอร์ชันใหม่! {local_ver} → {remote_info.version}", "INFO")
+            log(f"   • 🆕 พบเวอร์ชันใหม่! {local_ver} → {remote_info.version}", "INFO")
         else:
-            log("   • yt-dlp เป็นเวอร์ชันล่าสุดแล้ว ✓", "SUCCESS")
+            log("   • ✅ yt-dlp เป็นเวอร์ชันล่าสุดแล้ว", "SUCCESS")
             report("✅ ล่าสุดแล้ว!", 100.0)
             return True
     
