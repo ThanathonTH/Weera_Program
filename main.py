@@ -30,14 +30,27 @@ from datetime import datetime
 from updater import run_full_update_routine
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ⚙️ PATH CONFIGURATION
+# ⚙️ ROBUST PATH CONFIGURATION (Fixed for PyInstaller One-File)
 # ══════════════════════════════════════════════════════════════════════════════
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    # 🏭 Production Mode (.exe)
+    # Use the directory of the executable itself (External Storage)
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    # 🛠️ Development Mode (.py)
+    # Use the directory of the source file
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Define paths relative to the executable location
 ENGINE_DIR = os.path.join(BASE_DIR, "engine")
 FONT_DIR = os.path.join(BASE_DIR, "font")
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 
+# Ensure critical directories exist
+os.makedirs(ENGINE_DIR, exist_ok=True)
+
+# Binary paths
 YTDLP_PATH = os.path.join(ENGINE_DIR, "yt-dlp.exe")
 FFMPEG_PATH = os.path.join(ENGINE_DIR, "ffmpeg.exe")
 FFPROBE_PATH = os.path.join(ENGINE_DIR, "ffprobe.exe")
