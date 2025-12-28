@@ -125,6 +125,7 @@ def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
         str: เวอร์ชัน (e.g., "2023.11.16") หรือ None ถ้าไม่พบ
     """
     if not os.path.exists(ytdlp_path):
+        print(f"[DEBUG] yt-dlp not found at: {ytdlp_path}")
         return None
     
     try:
@@ -132,20 +133,34 @@ def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
             [ytdlp_path, "--version"],
             capture_output=True,
             text=True,
-            timeout=10,
+            encoding='utf-8',  # ✅ Explicit encoding
+            errors='replace',   # ✅ Handle encoding errors gracefully
+            timeout=15,         # ✅ Increased timeout
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
         if result.returncode == 0:
             version = result.stdout.strip()
-            return version if version else None
-        return None
+            if version:
+                print(f"[DEBUG] Local yt-dlp version: {version}")
+                return version
+            else:
+                print(f"[DEBUG] yt-dlp returned empty version")
+                return None
+        else:
+            print(f"[DEBUG] yt-dlp --version failed: return code {result.returncode}")
+            if result.stderr:
+                print(f"[DEBUG] stderr: {result.stderr.strip()}")
+            return None
         
     except subprocess.TimeoutExpired:
+        print(f"[DEBUG] yt-dlp --version timed out")
         return None
     except FileNotFoundError:
+        print(f"[DEBUG] yt-dlp executable not found")
         return None
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG] Error getting yt-dlp version: {type(e).__name__}: {e}")
         return None
 
 

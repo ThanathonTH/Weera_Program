@@ -993,13 +993,24 @@ class InfinityMP3Downloader(ctk.CTk):
         2. ตรวจสอบ yt-dlp Update - Smart Version Check ก่อนดาวน์โหลด
         """
         try:
-            # หา path ของ executable (รองรับทั้ง .py และ .exe)
-            if getattr(sys, 'frozen', False):
-                # ถ้าเป็น .exe (PyInstaller)
+            # ═══════════════════════════════════════════════════════════════
+            # Detect Running Mode
+            # ═══════════════════════════════════════════════════════════════
+            is_frozen = getattr(sys, 'frozen', False)
+            
+            if is_frozen:
+                # Production Mode (.exe)
                 app_path = sys.executable
+                skip_app_update = False
+                self.log("🏭 Running in Production Mode (.exe)", "INFO")
             else:
-                # ถ้าเป็น .py - ข้าม app update
+                # Developer Mode (.py)
                 app_path = os.path.join(BASE_DIR, "main.exe")
+                skip_app_update = True
+                self.log("⚠️ Developer Mode: รันจาก .py - ข้าม App Self-Update", "WARNING")
+                self.log("   (จะตรวจสอบเฉพาะ yt-dlp เท่านั้น)", "INFO")
+            
+            self.log(f"📌 App Version: {APP_VERSION}", "INFO")
             
             # เรียกใช้ Chained Update Routine
             result = run_full_update_routine(
@@ -1009,7 +1020,7 @@ class InfinityMP3Downloader(ctk.CTk):
                 engine_dir=ENGINE_DIR,
                 progress_callback=self.update_progress,
                 log_callback=self.log,
-                skip_app_update=not getattr(sys, 'frozen', False)  # ข้าม app update ถ้ารันจาก .py
+                skip_app_update=skip_app_update
             )
             
             # ตรวจสอบผลลัพธ์
