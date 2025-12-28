@@ -1,6 +1,6 @@
 {
     "version": "3.2.0",
-    "download_url": "https://github.com/ThanathonTH/Weera_Program/releases/download/v3.2.0/InfinityDownloader_v3.2.0.zip",
+    "download_url": "https://github.com/ThanathonTH/Weera_Program/releases/download/v3.2.0/InfinityDownloaderV3.2.0.zip",
     "changelog": "- เพิ่มเมนูคลิกขวา Copy/Paste\n- แก้ปัญหา Ctrl+C/V ภาษาไทย\n",
     "release_notes": "Major Update v3.2.0 - Fixed Link"
 }
