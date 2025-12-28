@@ -1,0 +1,20 @@
+# ไม่เอาโฟลเดอร์ Cache
+__pycache__/
+*.py[cod]
+
+# ไม่เอา Environment Variables (ความลับ)
+.env
+.venv
+env/
+venv/
+
+# ไม่เอาไฟล์ Binary ขนาดใหญ่ (เราจะให้ Updater โหลดเอง หรือใส่ใน Releases)
+engine/
+font/
+*.exe
+*.zip
+
+# ไม่เอาไฟล์ที่เกิดจากการ Build เป็น exe
+build/
+dist/
+*.spec
