@@ -19,13 +19,14 @@ import os
 import shutil
 import re
 import io
+import sys
 import json
 from tkinter import filedialog, messagebox
 from typing import Optional, Callable
 from datetime import datetime
 
-# Import decoupled updater module
-from updater import update_ytdlp
+# Import decoupled updater module (Chained Update System)
+from updater import run_full_update_routine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ⚙️ PATH CONFIGURATION
@@ -43,6 +44,10 @@ FFPROBE_PATH = os.path.join(ENGINE_DIR, "ffprobe.exe")
 # Download URLs
 YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+
+# 🔄 APP VERSION & UPDATE CONFIGURATION
+APP_VERSION = "3.1.0"
+UPDATE_JSON_URL = "https://raw.githubusercontent.com/ThanathonTH/Weera_Program/main/version.json"
 
 # UI Theme
 ctk.set_appearance_mode("dark")
@@ -981,21 +986,48 @@ class InfinityMP3Downloader(ctk.CTk):
     @run_in_thread
     def _start_update(self):
         """
-        อัปเดต yt-dlp โดยใช้ Decoupled Updater Module
+        🔗 Chained Update System
         
-        Logic ถูกแยกไปอยู่ใน updater.py เพื่อลดความซับซ้อน
-        GUI ใช้ callbacks เพื่อรับ progress และ logs
+        ลำดับการทำงาน:
+        1. ตรวจสอบ App Update (version.json) - ถ้ามี จะ Swap & Restart
+        2. ตรวจสอบ yt-dlp Update - Smart Version Check ก่อนดาวน์โหลด
         """
         try:
-            # เรียกใช้ updater module พร้อม callbacks
-            success = update_ytdlp(
+            # หา path ของ executable (รองรับทั้ง .py และ .exe)
+            if getattr(sys, 'frozen', False):
+                # ถ้าเป็น .exe (PyInstaller)
+                app_path = sys.executable
+            else:
+                # ถ้าเป็น .py - ข้าม app update
+                app_path = os.path.join(BASE_DIR, "main.exe")
+            
+            # เรียกใช้ Chained Update Routine
+            result = run_full_update_routine(
+                app_version=APP_VERSION,
+                app_version_url=UPDATE_JSON_URL,
+                app_path=app_path,
                 engine_dir=ENGINE_DIR,
                 progress_callback=self.update_progress,
-                log_callback=self.log
+                log_callback=self.log,
+                skip_app_update=not getattr(sys, 'frozen', False)  # ข้าม app update ถ้ารันจาก .py
             )
             
-            if success:
-                self.after(0, lambda: messagebox.showinfo("สำเร็จ", "อัปเดตเรียบร้อย!"))
+            # ตรวจสอบผลลัพธ์
+            if result.requires_restart:
+                # App update ต้องการ restart
+                self.log("🔄 โปรแกรมจะปิดและเปิดใหม่อัตโนมัติ...", "SUCCESS")
+                self.after(0, lambda: messagebox.showinfo(
+                    "กำลังอัปเดต",
+                    "โปรแกรมจะปิดและเปิดใหม่อัตโนมัติเพื่อติดตั้งเวอร์ชันใหม่"
+                ))
+                # รอ 1 วินาทีแล้วปิดโปรแกรม (ให้ batch script ทำงาน)
+                self.after(1500, lambda: sys.exit(0))
+                return
+            
+            if result.success:
+                self.after(0, lambda: messagebox.showinfo("สำเร็จ", result.message))
+            else:
+                self.after(0, lambda: messagebox.showwarning("แจ้งเตือน", result.message))
             
             self._hide_progress()
             
