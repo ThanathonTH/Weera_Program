@@ -546,6 +546,19 @@ class InfinityMP3Downloader(ctk.CTk):
         self.geometry("780x550")
         self.minsize(720, 450)
         
+        # ═══════════════════════════════════════════════════════════════════
+        # STEP 4: App Icon (Visual Identity)
+        # ═══════════════════════════════════════════════════════════════════
+        ICON_PATH = os.path.join(BASE_DIR, "icon", "weeraOwner.ico")
+        if os.path.exists(ICON_PATH):
+            try:
+                self.iconbitmap(ICON_PATH)
+                print(f"✅ App icon loaded: {ICON_PATH}")
+            except Exception as e:
+                print(f"⚠️ Failed to load icon: {e}")
+        else:
+            print(f"⚠️ Icon not found: {ICON_PATH}")
+        
         # State
         self.is_downloading = False
         self.is_updating = False
