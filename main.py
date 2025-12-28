@@ -932,7 +932,9 @@ class InfinityMP3Downloader(ctk.CTk):
                 "--ffmpeg-location", ENGINE_DIR,
                 "--extract-audio",
                 "--audio-format", "mp3",
-                "--audio-quality", "0",
+                "--audio-quality", "320K",  # ✅ CBR 320kbps (Maximum Quality)
+                "--add-metadata",           # ✅ Embed Artist, Title, etc.
+                "--embed-thumbnail",        # ✅ Embed Cover Art
                 "--restrict-filenames",
                 "--no-playlist",
                 "--newline",
