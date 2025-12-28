@@ -60,7 +60,7 @@ YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/
 FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 # 🔄 APP VERSION & UPDATE CONFIGURATION
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.2.0"
 UPDATE_JSON_URL = "https://raw.githubusercontent.com/ThanathonTH/Weera_Program/main/version.json"
 
 # UI Theme
@@ -608,6 +608,103 @@ class InfinityMP3Downloader(ctk.CTk):
             self.FONT_SMALL = (ff, 11)
         self.FONT_LOG = ("Consolas", 12)
     
+    def _create_context_menu(self, widget):
+        """
+        📋 สร้าง Right-Click Context Menu สำหรับ Entry Widget
+        
+        Features:
+        - Cut/Copy/Paste/Select All (Thai labels)
+        - Works with any keyboard layout (Thai/English)
+        - Robust error handling
+        """
+        import tkinter as tk
+        
+        # Create the menu
+        context_menu = tk.Menu(widget, tearoff=0, font=self.FONT_NORMAL)
+        
+        # Get the underlying tkinter entry widget from CTkEntry
+        try:
+            inner_entry = widget._entry  # CTkEntry internal reference
+        except AttributeError:
+            inner_entry = widget  # Fallback for standard Entry
+        
+        # Menu commands using virtual events (keyboard layout independent)
+        context_menu.add_command(
+            label="✂️  ตัด",
+            command=lambda: inner_entry.event_generate("<<Cut>>")
+        )
+        context_menu.add_command(
+            label="📄  คัดลอก",
+            command=lambda: inner_entry.event_generate("<<Copy>>")
+        )
+        context_menu.add_command(
+            label="📋  วาง",
+            command=lambda: inner_entry.event_generate("<<Paste>>")
+        )
+        context_menu.add_separator()
+        context_menu.add_command(
+            label="✅  เลือกทั้งหมด",
+            command=lambda: self._select_all(inner_entry)
+        )
+        
+        def show_context_menu(event):
+            """Show context menu at cursor position"""
+            try:
+                # Focus the widget first
+                inner_entry.focus_set()
+                # Display menu at mouse position
+                context_menu.tk_popup(event.x_root, event.y_root)
+            except Exception as e:
+                print(f"⚠️ Context menu error: {e}")
+            finally:
+                context_menu.grab_release()
+        
+        # Bind right-click event (Button-3 on Windows/Linux, Button-2 on Mac)
+        inner_entry.bind("<Button-3>", show_context_menu)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # 🌐 Smart Keyboard Shortcuts (Keycode-Based, Language Independent)
+        # ═══════════════════════════════════════════════════════════════
+        # Uses hardware keycodes instead of characters so it works with
+        # ANY keyboard layout (Thai, English, etc.)
+        
+        def _handle_smart_shortcuts(event):
+            """
+            Handle Ctrl+Key shortcuts using hardware keycodes.
+            This works regardless of keyboard language layout.
+            
+            Windows Standard Keycodes:
+            A=65, C=67, V=86, X=88
+            """
+            keycode = event.keycode
+            
+            if keycode == 65:  # A key -> Select All
+                self._select_all(inner_entry)
+                return "break"
+            elif keycode == 67:  # C key -> Copy
+                inner_entry.event_generate("<<Copy>>")
+                return "break"
+            elif keycode == 86:  # V key -> Paste
+                inner_entry.event_generate("<<Paste>>")
+                return "break"
+            elif keycode == 88:  # X key -> Cut
+                inner_entry.event_generate("<<Cut>>")
+                return "break"
+            
+            return None  # Let other keys pass through
+        
+        # Bind generic Control-Key event to our smart handler
+        inner_entry.bind("<Control-Key>", _handle_smart_shortcuts)
+    
+    def _select_all(self, entry_widget):
+        """Helper to select all text in an entry widget"""
+        try:
+            entry_widget.select_range(0, "end")
+            entry_widget.icursor("end")
+        except Exception:
+            pass
+        return "break"  # Prevent default behavior
+    
     def _build_ui(self):
         """สร้าง UI"""
         self.grid_columnconfigure(0, weight=1)
@@ -647,6 +744,11 @@ class InfinityMP3Downloader(ctk.CTk):
             height=48, font=self.FONT_NORMAL, corner_radius=8
         )
         self.url_entry.grid(row=1, column=0, padx=15, sticky="ew")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # 📋 Right-Click Context Menu (World-Class UX)
+        # ═══════════════════════════════════════════════════════════════
+        self._create_context_menu(self.url_entry)
         
         # Buttons
         btn_row = ctk.CTkFrame(input_section, fg_color="transparent")
