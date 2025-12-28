@@ -21,6 +21,7 @@ import re
 import io
 import sys
 import json
+import ctypes  # For Windows Taskbar Icon Fix
 from tkinter import filedialog, messagebox
 from typing import Optional, Callable
 from datetime import datetime
@@ -547,8 +548,17 @@ class InfinityMP3Downloader(ctk.CTk):
         self.minsize(720, 450)
         
         # ═══════════════════════════════════════════════════════════════════
-        # STEP 4: App Icon (Visual Identity)
+        # STEP 4: App Icon (Visual Identity + Taskbar Fix)
         # ═══════════════════════════════════════════════════════════════════
+        # Windows Taskbar Fix: Set unique AppUserModelID so icon shows correctly
+        try:
+            myappid = 'weera.infinity.downloader.v3.1'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            print(f"✅ Taskbar ID set: {myappid}")
+        except Exception as e:
+            print(f"⚠️ Failed to set taskbar ID: {e}")
+        
+        # Window Icon
         ICON_PATH = os.path.join(BASE_DIR, "icon", "weeraOwner.ico")
         if os.path.exists(ICON_PATH):
             try:
