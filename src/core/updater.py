@@ -15,8 +15,12 @@ import sys
 import subprocess
 import requests
 import tempfile
+import zipfile
+import shutil
 from typing import Callable, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
+
+from src.utils.paths import ENGINE_DIR, YTDLP_PATH, is_frozen
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -44,7 +48,7 @@ class VersionInfo:
     download_url: str
     release_notes: str = ""
     
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(self.version and self.download_url)
 
 
@@ -58,32 +62,38 @@ class UpdateResult:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TYPE ALIASES
+# ══════════════════════════════════════════════════════════════════════════════
+
+ProgressCallback = Callable[[str, float], None]  # (label, percentage)
+LogCallback = Callable[[str, str], None]  # (message, level)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # VERSION COMPARISON UTILITIES
 # ══════════════════════════════════════════════════════════════════════════════
 
 def compare_versions(local: str, remote: str) -> int:
     """
-    เปรียบเทียบเวอร์ชัน
+    Compare version strings.
     
     Args:
-        local: เวอร์ชันในเครื่อง
-        remote: เวอร์ชันจาก server
+        local: Local version string
+        remote: Remote version string
     
     Returns:
-        -1: local < remote (ต้องอัปเดต)
-         0: local == remote (ล่าสุดแล้ว)
-         1: local > remote (ในเครื่องใหม่กว่า?!)
+        -1: local < remote (needs update)
+         0: local == remote (up to date)
+         1: local > remote (local is newer)
     """
     def normalize(v: str) -> list:
-        """แปลงเป็น list ของตัวเลขเพื่อเปรียบเทียบ"""
-        # รองรับทั้ง "2023.11.16" และ "1.0.0" format
+        """Convert version string to list of integers for comparison."""
         v = v.strip().lstrip('v').lstrip('V')
         parts = []
         for part in v.replace('-', '.').replace('_', '.').split('.'):
             try:
                 parts.append(int(part))
             except ValueError:
-                # ถ้าเป็น string เช่น "beta" ให้ใช้ 0
                 parts.append(0)
         return parts
     
@@ -91,7 +101,7 @@ def compare_versions(local: str, remote: str) -> int:
         local_parts = normalize(local)
         remote_parts = normalize(remote)
         
-        # Pad ให้ยาวเท่ากัน
+        # Pad to equal length
         max_len = max(len(local_parts), len(remote_parts))
         local_parts.extend([0] * (max_len - len(local_parts)))
         remote_parts.extend([0] * (max_len - len(remote_parts)))
@@ -104,7 +114,6 @@ def compare_versions(local: str, remote: str) -> int:
         return 0
         
     except Exception:
-        # ถ้าเปรียบเทียบไม่ได้ ให้ใช้ string comparison
         if local == remote:
             return 0
         return -1 if local < remote else 1
@@ -116,13 +125,13 @@ def compare_versions(local: str, remote: str) -> int:
 
 def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
     """
-    ดึงเวอร์ชันของ yt-dlp จาก binary ในเครื่อง
+    Get the version of the local yt-dlp binary.
     
     Args:
-        ytdlp_path: Path ไปยัง yt-dlp.exe
+        ytdlp_path: Path to yt-dlp.exe
     
     Returns:
-        str: เวอร์ชัน (e.g., "2023.11.16") หรือ None ถ้าไม่พบ/เช็คไม่ได้
+        str: Version string (e.g., "2023.11.16") or None if not found
     """
     if not os.path.exists(ytdlp_path):
         print(f"[DEBUG] yt-dlp not found at: {ytdlp_path}")
@@ -134,21 +143,16 @@ def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
             capture_output=True,
             text=True,
             encoding='utf-8',
-            errors='ignore',  # ✅ Ignore encoding errors for non-English systems
+            errors='ignore',
             timeout=15,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
-        # Debug: show raw output
         print(f"[DEBUG] yt-dlp --version stdout: '{result.stdout.strip()}'")
         
         if result.returncode == 0:
             version = result.stdout.strip()
-            if version:
-                return version
-            else:
-                print(f"[DEBUG] yt-dlp returned empty version")
-                return None
+            return version if version else None
         else:
             print(f"[DEBUG] yt-dlp --version failed: return code {result.returncode}")
             return None
@@ -166,10 +170,10 @@ def get_local_ytdlp_version(ytdlp_path: str) -> Optional[str]:
 
 def get_remote_ytdlp_version() -> Optional[VersionInfo]:
     """
-    ดึงข้อมูลเวอร์ชันล่าสุดของ yt-dlp จาก GitHub API
+    Get the latest yt-dlp version from GitHub API.
     
     Returns:
-        VersionInfo หรือ None ถ้าเช็คไม่ได้
+        VersionInfo or None if check failed
     """
     API_URL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
     
@@ -192,7 +196,7 @@ def get_remote_ytdlp_version() -> Optional[VersionInfo]:
         
         version = data.get("tag_name", "").strip()
         
-        # หา download URL สำหรับ Windows exe
+        # Find download URL for Windows exe
         download_url = ""
         for asset in data.get("assets", []):
             if asset.get("name") == "yt-dlp.exe":
@@ -206,7 +210,7 @@ def get_remote_ytdlp_version() -> Optional[VersionInfo]:
         return VersionInfo(
             version=version,
             download_url=download_url,
-            release_notes=data.get("body", "")[:500]  # Truncate
+            release_notes=data.get("body", "")[:500]
         )
         
     except requests.RequestException:
@@ -217,10 +221,10 @@ def get_remote_ytdlp_version() -> Optional[VersionInfo]:
 
 def check_ytdlp_update(engine_dir: str) -> Tuple[bool, str, str]:
     """
-    ตรวจสอบว่า yt-dlp ต้องอัปเดตหรือไม่
+    Check if yt-dlp needs to be updated.
     
     Args:
-        engine_dir: โฟลเดอร์ engine
+        engine_dir: Path to engine directory
     
     Returns:
         (needs_update: bool, local_version: str, remote_version: str)
@@ -231,13 +235,11 @@ def check_ytdlp_update(engine_dir: str) -> Tuple[bool, str, str]:
     remote_info = get_remote_ytdlp_version()
     
     if remote_info is None:
-        # API fail - ไม่สามารถเช็คได้
         return (False, local_ver, "ไม่สามารถเช็คได้")
     
     remote_ver = remote_info.version
     
     if local_ver == "ไม่พบ":
-        # ยังไม่มี - ต้องโหลด
         return (True, local_ver, remote_ver)
     
     comparison = compare_versions(local_ver, remote_ver)
@@ -255,21 +257,14 @@ def check_app_update(
     version_url: str
 ) -> Optional[VersionInfo]:
     """
-    ตรวจสอบว่าแอปพลิเคชันมีเวอร์ชันใหม่หรือไม่
+    Check if the application has a new version available.
     
     Args:
-        current_version: เวอร์ชันปัจจุบันของแอป (e.g., "3.1.0")
-        version_url: URL ไปยัง version.json
+        current_version: Current app version (e.g., "3.1.0")
+        version_url: URL to version.json
     
     Returns:
-        VersionInfo ถ้ามีอัปเดต, None ถ้าล่าสุดแล้ว
-    
-    Expected version.json format:
-    {
-        "version": "3.2.0",
-        "download_url": "https://example.com/app.exe",
-        "release_notes": "Bug fixes..."
-    }
+        VersionInfo if update available, None if up to date
     """
     try:
         response = requests.get(version_url, timeout=15)
@@ -282,14 +277,14 @@ def check_app_update(
         
         comparison = compare_versions(current_version, remote_version)
         
-        if comparison < 0:  # Remote is newer
+        if comparison < 0:
             return VersionInfo(
                 version=remote_version,
                 download_url=data.get("download_url", ""),
                 release_notes=data.get("release_notes", "")
             )
         
-        return None  # Up to date
+        return None
         
     except Exception:
         return None
@@ -298,40 +293,28 @@ def check_app_update(
 def perform_app_update(
     download_url: str,
     app_path: str,
-    progress_callback: Optional[Callable[[str, float], None]] = None,
-    log_callback: Optional[Callable[[str, str], None]] = None
+    progress_callback: Optional[ProgressCallback] = None,
+    log_callback: Optional[LogCallback] = None
 ) -> UpdateResult:
     """
-    อัปเดตแอปพลิเคชันโดยใช้ Swap & Restart Strategy
+    Update the application using Swap & Restart strategy.
     
-    🆕 v3.2: รองรับทั้ง:
-    - Raw .exe file (backward compatible)
-    - ZIP Package (exe + asset folders)
-    
-    Windows ไม่อนุญาตให้ลบ/เขียนทับไฟล์ .exe ที่กำลังทำงาน
-    ดังนั้นต้องใช้ batch script ที่จะ:
-    1. รอให้แอปปิด
-    2. Copy/แทนที่ไฟล์ทั้งหมด
-    3. เปิดแอปใหม่
-    4. ลบ batch script ตัวเอง
+    Supports both raw .exe files and ZIP packages.
     
     Args:
-        download_url: URL สำหรับดาวน์โหลด (.exe หรือ .zip)
-        app_path: Path ของ .exe ปัจจุบัน
-        progress_callback: func(label, pct)
-        log_callback: func(message, level)
+        download_url: URL to download new version
+        app_path: Path to current .exe
+        progress_callback: Progress update function
+        log_callback: Log message function
     
     Returns:
-        UpdateResult ที่มี requires_restart=True ถ้าสำเร็จ
+        UpdateResult with requires_restart=True if successful
     """
-    import zipfile
-    import shutil
-    
-    def report_progress(label: str, pct: float):
+    def report_progress(label: str, pct: float) -> None:
         if progress_callback:
             progress_callback(label, pct)
     
-    def log(msg: str, level: str = "INFO"):
+    def log(msg: str, level: str = "INFO") -> None:
         if log_callback:
             log_callback(msg, level)
     
@@ -342,10 +325,8 @@ def perform_app_update(
     batch_path = os.path.join(app_dir, "update.bat")
     
     try:
-        # ═══════════════════════════════════════════════════════════════════
-        # STEP 1: ดาวน์โหลดไฟล์
-        # ═══════════════════════════════════════════════════════════════════
-        log("📥 กำลังดาวน์โหลดเวอร์ชันใหม่...", "INFO")
+        # Download
+        log("📥 Downloading new version...", "INFO")
         report_progress("กำลังดาวน์โหลด...", 10.0)
         
         response = requests.get(download_url, stream=True, timeout=120)
@@ -362,33 +343,26 @@ def perform_app_update(
                     pct = 10.0 + (downloaded / total_size) * 50.0
                     report_progress(f"ดาวน์โหลด... {downloaded // (1024*1024)} MB", pct)
         
-        log(f"✓ ดาวน์โหลดเสร็จ: {downloaded} bytes", "INFO")
+        log(f"✓ Download complete: {downloaded} bytes", "INFO")
         
-        # ═══════════════════════════════════════════════════════════════════
-        # STEP 2: ตรวจสอบประเภทไฟล์ (ZIP หรือ EXE)
-        # ═══════════════════════════════════════════════════════════════════
+        # Check file type
         report_progress("ตรวจสอบไฟล์...", 65.0)
-        
         is_zip = zipfile.is_zipfile(download_temp)
-        log(f"   • ประเภทไฟล์: {'ZIP Package' if is_zip else 'Raw EXE'}", "INFO")
+        log(f"   • File type: {'ZIP Package' if is_zip else 'Raw EXE'}", "INFO")
         
         if is_zip:
-            # ═══════════════════════════════════════════════════════════════
-            # ZIP PACKAGE MODE
-            # ═══════════════════════════════════════════════════════════════
+            # ZIP Package mode
             report_progress("แตกไฟล์ ZIP...", 70.0)
-            log("📦 กำลังแตกไฟล์ ZIP Package...", "INFO")
+            log("📦 Extracting ZIP package...", "INFO")
             
-            # Clean up old extract dir
             if os.path.exists(extract_dir):
                 shutil.rmtree(extract_dir, ignore_errors=True)
             os.makedirs(extract_dir, exist_ok=True)
             
-            # Extract ZIP
             with zipfile.ZipFile(download_temp, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
             
-            # Find the exe file in extracted content
+            # Find exe in extracted content
             exe_found = None
             for root, dirs, files in os.walk(extract_dir):
                 for f in files:
@@ -399,7 +373,6 @@ def perform_app_update(
                     break
             
             if not exe_found:
-                # Try to find any .exe
                 for root, dirs, files in os.walk(extract_dir):
                     for f in files:
                         if f.lower().endswith('.exe'):
@@ -411,13 +384,12 @@ def perform_app_update(
             if not exe_found:
                 raise UpdateError("ไม่พบไฟล์ .exe ใน ZIP Package")
             
-            # Get the source directory (parent of exe or extract_dir itself)
             source_dir = os.path.dirname(exe_found) if os.path.dirname(exe_found) != extract_dir else extract_dir
-            log(f"   • พบ EXE: {os.path.basename(exe_found)}", "INFO")
+            log(f"   • Found EXE: {os.path.basename(exe_found)}", "INFO")
             
             # Create batch script for directory merge
             report_progress("เตรียมการติดตั้ง...", 85.0)
-            log("📝 สร้าง update script (Directory Merge)...", "INFO")
+            log("📝 Creating update script (Directory Merge)...", "INFO")
             
             batch_content = f'''@echo off
 chcp 65001 >nul
@@ -426,28 +398,27 @@ echo   Infinity Downloader - Auto Update
 echo ══════════════════════════════════════════
 echo.
 
-:: รอให้แอปเดิมปิด (3 วินาที)
+:: Wait for app to close
 echo [1/4] รอให้โปรแกรมปิด...
 timeout /t 3 /nobreak >nul
 
-:: พยายาม kill process
+:: Try to kill process
 taskkill /f /im "{app_name}" 2>nul
 timeout /t 2 /nobreak >nul
 
-:: Copy ไฟล์ทั้งหมดมาแทน (robocopy /MIR จะ merge ได้ดี)
+:: Copy files
 echo [2/4] ติดตั้งไฟล์ใหม่...
 robocopy "{source_dir}" "{app_dir}" /E /NFL /NDL /NJH /NJS /nc /ns /np 2>nul
 if errorlevel 8 (
-    :: ถ้า robocopy ล้มเหลว ลองใช้ xcopy
     xcopy /s /e /y /q "{source_dir}\\*" "{app_dir}\\" 2>nul
 )
 
-:: ลบโฟลเดอร์ extract
+:: Cleanup
 echo [3/4] ทำความสะอาด...
 rmdir /s /q "{extract_dir}" 2>nul
 del /f /q "{download_temp}" 2>nul
 
-:: ตรวจสอบและเปิดโปรแกรม
+:: Start app
 echo [4/4] เปิดโปรแกรม...
 if exist "{app_path}" (
     echo.
@@ -462,16 +433,13 @@ if exist "{app_path}" (
     pause
 )
 
-:: ลบ batch script ตัวเอง
+:: Delete self
 (goto) 2>nul & del "%~f0"
 '''
         else:
-            # ═══════════════════════════════════════════════════════════════
-            # RAW EXE MODE (Backward Compatible)
-            # ═══════════════════════════════════════════════════════════════
+            # Raw EXE mode
             new_app_path = os.path.join(app_dir, "app.new.exe")
             
-            # Rename temp to new exe
             if os.path.exists(new_app_path):
                 os.remove(new_app_path)
             os.rename(download_temp, new_app_path)
@@ -480,21 +448,18 @@ if exist "{app_path}" (
                 raise UpdateError("ไฟล์ที่ดาวน์โหลดเสียหาย")
             
             report_progress("เตรียมการติดตั้ง...", 85.0)
-            log("📝 สร้าง update script (Single EXE)...", "INFO")
+            log("📝 Creating update script (Single EXE)...", "INFO")
             
             batch_content = f'''@echo off
 chcp 65001 >nul
 echo กำลังอัปเดต... กรุณารอสักครู่
 echo.
 
-:: รอให้แอปเดิมปิด (3 วินาที)
 timeout /t 3 /nobreak >nul
 
-:: พยายามลบไฟล์เก่า
 echo ลบไฟล์เก่า...
 del /f /q "{app_path}" 2>nul
 
-:: ถ้าลบไม่ได้ ลอง taskkill
 if exist "{app_path}" (
     echo พยายามปิดโปรแกรม...
     taskkill /f /im "{app_name}" 2>nul
@@ -502,11 +467,9 @@ if exist "{app_path}" (
     del /f /q "{app_path}" 2>nul
 )
 
-:: ย้ายไฟล์ใหม่มาแทน
 echo ติดตั้งเวอร์ชันใหม่...
 move /y "{new_app_path}" "{app_path}"
 
-:: ตรวจสอบว่าย้ายสำเร็จ
 if exist "{app_path}" (
     echo.
     echo ติดตั้งสำเร็จ! กำลังเปิดโปรแกรม...
@@ -518,21 +481,16 @@ if exist "{app_path}" (
     pause
 )
 
-:: ลบ batch script ตัวเอง
 (goto) 2>nul & del "%~f0"
 '''
         
-        # Write batch script
+        # Write and execute batch
         with open(batch_path, 'w', encoding='utf-8') as f:
             f.write(batch_content)
         
-        # ═══════════════════════════════════════════════════════════════════
-        # STEP 3: Execute Batch Script
-        # ═══════════════════════════════════════════════════════════════════
         report_progress("เริ่มการติดตั้ง...", 95.0)
-        log("🚀 เริ่ม update script - โปรแกรมจะปิดและเปิดใหม่อัตโนมัติ", "INFO")
+        log("🚀 Starting update script - app will restart automatically", "INFO")
         
-        # Start batch script (detached from this process)
         subprocess.Popen(
             ["cmd", "/c", batch_path],
             shell=False,
@@ -550,7 +508,7 @@ if exist "{app_path}" (
         )
         
     except Exception as e:
-        log(f"❌ อัปเดตล้มเหลว: {str(e)}", "ERROR")
+        log(f"❌ Update failed: {str(e)}", "ERROR")
         report_progress("❌ ล้มเหลว", 0)
         
         # Cleanup
@@ -572,24 +530,24 @@ if exist "{app_path}" (
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COMPONENT UPDATE (Original Logic - Now with Verification)
+# COMPONENT UPDATE
 # ══════════════════════════════════════════════════════════════════════════════
 
 def update_component(
     download_url: str,
     target_path: str,
     engine_dir: str,
-    progress_callback: Optional[Callable[[str, float], None]] = None,
-    log_callback: Optional[Callable[[str, str], None]] = None,
+    progress_callback: Optional[ProgressCallback] = None,
+    log_callback: Optional[LogCallback] = None,
     timeout: int = 60
 ) -> bool:
-    """ดาวน์โหลดและอัปเดต Component แบบ Self-Healing (Original)"""
+    """Download and update a component with self-healing."""
     
-    def report_progress(label: str, pct: float):
+    def report_progress(label: str, pct: float) -> None:
         if progress_callback:
             progress_callback(label, pct)
     
-    def log(message: str, level: str = "INFO"):
+    def log(message: str, level: str = "INFO") -> None:
         if log_callback:
             log_callback(message, level)
     
@@ -600,7 +558,7 @@ def update_component(
     try:
         os.makedirs(engine_dir, exist_ok=True)
         
-        log(f"📥 กำลังดาวน์โหลด {filename}...", "INFO")
+        log(f"📥 Downloading {filename}...", "INFO")
         report_progress("กำลังดาวน์โหลด...", 5.0)
         
         response = requests.get(download_url, stream=True, timeout=timeout)
@@ -617,7 +575,7 @@ def update_component(
                     pct = 5.0 + (downloaded / total_size) * 60.0
                     report_progress(f"ดาวน์โหลด... {downloaded // 1024} KB", pct)
         
-        log(f"✓ ดาวน์โหลดเสร็จ: {downloaded} bytes", "INFO")
+        log(f"✓ Download complete: {downloaded} bytes", "INFO")
         
         report_progress("ตรวจสอบไฟล์...", 70.0)
         if os.path.getsize(temp_path) < 1000:
@@ -646,7 +604,7 @@ def update_component(
         os.rename(temp_path, target_path)
         
         report_progress("✅ อัปเดตสำเร็จ!", 100.0)
-        log(f"🎉 อัปเดต {filename} เสร็จสมบูรณ์!", "SUCCESS")
+        log(f"🎉 {filename} update complete!", "SUCCESS")
         return True
         
     except Exception as e:
@@ -661,99 +619,83 @@ def update_component(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SMART UPDATE FUNCTIONS
+# SMART UPDATE FUNCTIONS  
 # ══════════════════════════════════════════════════════════════════════════════
 
 def update_ytdlp(
     engine_dir: str,
-    progress_callback: Optional[Callable[[str, float], None]] = None,
-    log_callback: Optional[Callable[[str, str], None]] = None,
+    progress_callback: Optional[ProgressCallback] = None,
+    log_callback: Optional[LogCallback] = None,
     force: bool = False
 ) -> bool:
     """
-    Smart Update สำหรับ yt-dlp - เช็คเวอร์ชันก่อนดาวน์โหลด
+    Smart update for yt-dlp - checks version before downloading.
     
     Args:
-        engine_dir: โฟลเดอร์ engine
-        progress_callback: func(label, pct)
-        log_callback: func(message, level)
-        force: บังคับดาวน์โหลดแม้ว่าจะล่าสุดแล้ว
+        engine_dir: Path to engine directory
+        progress_callback: Progress update function
+        log_callback: Log message function
+        force: Force download even if up to date
     
     Returns:
-        bool: True ถ้าสำเร็จ (รวมถึงกรณี "ล่าสุดแล้ว")
+        bool: True if successful (including "already up to date")
     """
-    def log(msg: str, level: str = "INFO"):
+    def log(msg: str, level: str = "INFO") -> None:
         if log_callback:
             log_callback(msg, level)
     
-    def report(label: str, pct: float):
+    def report(label: str, pct: float) -> None:
         if progress_callback:
             progress_callback(label, pct)
     
     ytdlp_path = os.path.join(engine_dir, "yt-dlp.exe")
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # STEP 1: ตรวจสอบเวอร์ชัน
-    # ═══════════════════════════════════════════════════════════════════════
+    # Check version
     report("ตรวจสอบเวอร์ชัน...", 5.0)
-    log("🔍 กำลังตรวจสอบเวอร์ชัน yt-dlp...", "INFO")
+    log("🔍 Checking yt-dlp version...", "INFO")
     
-    # Check file existence FIRST (separate from version check)
     file_exists = os.path.exists(ytdlp_path)
     local_ver = get_local_ytdlp_version(ytdlp_path)
     remote_info = get_remote_ytdlp_version()
     
-    # Log local status
     if local_ver:
-        log(f"   • เวอร์ชันในเครื่อง: {local_ver}", "INFO")
+        log(f"   • Local version: {local_ver}", "INFO")
     elif file_exists:
-        log("   • ⚠️ ไฟล์มีอยู่แต่เช็คเวอร์ชันไม่ได้ (สมมติว่าใช้งานได้)", "WARNING")
+        log("   • ⚠️ File exists but version check failed", "WARNING")
     else:
-        log("   • ยังไม่มี yt-dlp ในเครื่อง", "INFO")
+        log("   • yt-dlp not found locally", "INFO")
     
-    # Log remote status
     if remote_info:
-        log(f"   • เวอร์ชันล่าสุด: {remote_info.version}", "INFO")
+        log(f"   • Latest version: {remote_info.version}", "INFO")
     else:
-        log("   • ⚠️ ไม่สามารถเช็คเวอร์ชันล่าสุดได้ (API Error/Rate Limit)", "WARNING")
+        log("   • ⚠️ Cannot check latest version (API Error)", "WARNING")
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # STEP 2: ตัดสินใจว่าต้อง update หรือไม่
-    # ═══════════════════════════════════════════════════════════════════════
+    # Decide if update is needed
     needs_update = False
     download_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
     
-    # Case 1: No file at all -> Must download
     if not file_exists:
         needs_update = True
-        log("   • ต้องดาวน์โหลด (ไม่มีไฟล์)", "INFO")
-    
-    # Case 2: Force update requested
+        log("   • Must download (file not found)", "INFO")
     elif force:
         needs_update = True
-        log("   • บังคับอัปเดตตามที่ร้องขอ", "INFO")
-    
-    # Case 3: API failed but file exists -> KEEP existing (NO blind update)
+        log("   • Force update requested", "INFO")
     elif not remote_info and file_exists:
-        log("   • ✅ ใช้เวอร์ชันปัจจุบัน (ไม่สามารถเช็ค update ได้)", "SUCCESS")
+        log("   • ✅ Using current version (cannot check for updates)", "SUCCESS")
         report("✅ ใช้เวอร์ชันปัจจุบัน", 100.0)
         return True
-    
-    # Case 4: Version check failed but file exists -> Assume valid (NO blind update)
     elif not local_ver and file_exists and not force:
-        log("   • ✅ ข้าม update (เช็คเวอร์ชันไม่ได้แต่ไฟล์มีอยู่)", "SUCCESS")
+        log("   • ✅ Skipping update (version check failed but file exists)", "SUCCESS")
         report("✅ ใช้ไฟล์ปัจจุบัน", 100.0)
         return True
-    
-    # Case 5: Have both versions -> Compare
     elif local_ver and remote_info:
         comparison = compare_versions(local_ver, remote_info.version)
         if comparison < 0:
             needs_update = True
             download_url = remote_info.download_url
-            log(f"   • 🆕 พบเวอร์ชันใหม่! {local_ver} → {remote_info.version}", "INFO")
+            log(f"   • 🆕 New version found! {local_ver} → {remote_info.version}", "INFO")
         else:
-            log("   • ✅ yt-dlp เป็นเวอร์ชันล่าสุดแล้ว", "SUCCESS")
+            log("   • ✅ yt-dlp is up to date", "SUCCESS")
             report("✅ ล่าสุดแล้ว!", 100.0)
             return True
     
@@ -761,9 +703,7 @@ def update_ytdlp(
         report("✅ ล่าสุดแล้ว!", 100.0)
         return True
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # STEP 3: ดาวน์โหลดและติดตั้ง
-    # ═══════════════════════════════════════════════════════════════════════
+    # Download and install
     return update_component(
         download_url=download_url,
         target_path=ytdlp_path,
@@ -783,54 +723,52 @@ def run_full_update_routine(
     app_version_url: Optional[str],
     app_path: str,
     engine_dir: str,
-    progress_callback: Optional[Callable[[str, float], None]] = None,
-    log_callback: Optional[Callable[[str, str], None]] = None,
+    progress_callback: Optional[ProgressCallback] = None,
+    log_callback: Optional[LogCallback] = None,
     skip_app_update: bool = False
 ) -> UpdateResult:
     """
-    🔗 Chained Update Workflow
+    Chained Update Workflow
     
-    ลำดับการทำงาน:
-    1. ตรวจสอบ App Update (ถ้าเปิดใช้)
-       - ถ้ามี -> Download -> Swap & Restart -> STOP
-    2. ตรวจสอบ yt-dlp Update
-       - ถ้ามี -> Download & Replace
-    3. เสร็จสิ้น
+    Workflow:
+    1. Check App Update (if enabled)
+       - If found -> Download -> Swap & Restart -> STOP
+    2. Check yt-dlp Update
+       - If found -> Download & Replace
+    3. Complete
     
     Args:
-        app_version: เวอร์ชันปัจจุบันของแอป
-        app_version_url: URL ไปยัง version.json (None = ข้าม app update)
-        app_path: Path ของ main.exe
-        engine_dir: โฟลเดอร์ engine
-        progress_callback: func(label, pct)
-        log_callback: func(message, level)
-        skip_app_update: ข้าม app update ไปเลย
+        app_version: Current app version
+        app_version_url: URL to version.json (None = skip app update)
+        app_path: Path to main.exe
+        engine_dir: Engine directory path
+        progress_callback: Progress update function
+        log_callback: Log message function
+        skip_app_update: Skip app update entirely
     
     Returns:
-        UpdateResult ที่บอกสถานะและว่าต้อง restart หรือไม่
+        UpdateResult with status and restart requirement
     """
-    def log(msg: str, level: str = "INFO"):
+    def log(msg: str, level: str = "INFO") -> None:
         if log_callback:
             log_callback(msg, level)
     
-    def report(label: str, pct: float):
+    def report(label: str, pct: float) -> None:
         if progress_callback:
             progress_callback(label, pct)
     
-    log("🔄 เริ่มตรวจสอบการอัปเดต...", "INFO")
+    log("🔄 Starting update check...", "INFO")
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # STEP 1: Check App Update
-    # ═══════════════════════════════════════════════════════════════════════
+    # Check App Update
     if not skip_app_update and app_version_url:
         report("ตรวจสอบอัปเดตโปรแกรม...", 5.0)
-        log("📱 ตรวจสอบเวอร์ชันโปรแกรม...", "INFO")
+        log("📱 Checking app version...", "INFO")
         
         app_update = check_app_update(app_version, app_version_url)
         
         if app_update:
-            log(f"🆕 พบเวอร์ชันใหม่: {app_update.version}", "INFO")
-            log(f"   กำลังเตรียมอัปเดตโปรแกรม...", "INFO")
+            log(f"🆕 New version found: {app_update.version}", "INFO")
+            log("   Preparing app update...", "INFO")
             
             result = perform_app_update(
                 download_url=app_update.download_url,
@@ -840,16 +778,14 @@ def run_full_update_routine(
             )
             
             if result.success and result.requires_restart:
-                log("📲 โปรแกรมจะรีสตาร์ทอัตโนมัติ...", "SUCCESS")
+                log("📲 App will restart automatically...", "SUCCESS")
                 return result
             elif not result.success:
-                log("⚠️ อัปเดตโปรแกรมล้มเหลว - จะลองอัปเดต yt-dlp แทน", "WARNING")
+                log("⚠️ App update failed - will try yt-dlp update instead", "WARNING")
         else:
-            log("   • โปรแกรมเป็นเวอร์ชันล่าสุดแล้ว ✓", "INFO")
+            log("   • App is up to date ✓", "INFO")
     
-    # ═══════════════════════════════════════════════════════════════════════
-    # STEP 2: Check yt-dlp Update
-    # ═══════════════════════════════════════════════════════════════════════
+    # Check yt-dlp Update
     report("ตรวจสอบ yt-dlp...", 40.0)
     
     success = update_ytdlp(
