@@ -79,7 +79,7 @@ FFMPEG_DOWNLOAD_URL: str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-es
 # 🔄 APP VERSION & UPDATE CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-APP_VERSION: str = "3.3.0"
+APP_VERSION: str = "3.3.1"
 UPDATE_JSON_URL: str = "https://raw.githubusercontent.com/ThanathonTH/Weera_Program/main/version.json"
 
 

@@ -1,14 +1,17 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                    OPTIMIZED DOWNLOAD ENGINE v4.0                            ║
+║                    OPTIMIZED DOWNLOAD ENGINE v3.3.1                          ║
 ║              High-Performance yt-dlp Wrapper (Decoupled from GUI)            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  🚀 Performance Optimizations:                                               ║
-║     • --concurrent-fragments 4 (Parallel chunk downloads)                    ║
+║     • --concurrent-fragments 8 (Parallel chunk downloads)                    ║
+║     • --buffer-size 16K (Network optimization)                               ║
+║     • --postprocessor-args "ffmpeg:-threads 0" (Turbo encoding)              ║
 ║     • --resize-buffer (Optimized disk I/O)                                   ║
 ║     • Optional aria2c external downloader support                            ║
 ║  🔌 Decoupled: NO GUI imports, uses callbacks for communication             ║
 ║  🧵 Thread-safe: Designed for background execution                           ║
+║  🌏 Unicode/Thai filename support (no --restrict-filenames)                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -45,8 +48,10 @@ class Downloader:
     - Designed to run in a background thread
     
     PERFORMANCE OPTIMIZATIONS:
-    - Concurrent fragment downloads (4x parallel)
+    - Concurrent fragment downloads (8x parallel)
+    - FFmpeg multi-core turbo encoding (-threads 0)
     - Resize buffer for optimized disk I/O
+    - 16K buffer size for network optimization
     - Optional aria2c external downloader
     
     Usage:
@@ -72,7 +77,7 @@ class Downloader:
         output_dir: str,
         progress_callback: Optional[ProgressCallback] = None,
         log_callback: Optional[LogCallback] = None,
-        concurrent_fragments: int = 4,
+        concurrent_fragments: int = 8,
         use_aria2c: bool = False,
     ):
         """
@@ -82,7 +87,7 @@ class Downloader:
             output_dir: Directory to save downloaded MP3 files
             progress_callback: Function to receive progress updates (label, percentage)
             log_callback: Function to receive log messages (message, level)
-            concurrent_fragments: Number of parallel fragment downloads (default: 4)
+            concurrent_fragments: Number of parallel fragment downloads (default: 8)
             use_aria2c: Whether to use aria2c as external downloader (if installed)
         """
         self.output_dir = output_dir
@@ -128,22 +133,22 @@ class Downloader:
             "--audio-quality", "320K",  # ✅ Maximum quality CBR
             
             # ═══════════════════════════════════════════════════════════════
-            # 📊 METADATA & ARTWORK
+            # 📊 METADATA
             # ═══════════════════════════════════════════════════════════════
             "--add-metadata",           # ✅ Embed Artist, Title, Album
-            "--embed-thumbnail",        # ✅ Embed Cover Art
             
             # ═══════════════════════════════════════════════════════════════
             # 🚀 PERFORMANCE OPTIMIZATIONS
             # ═══════════════════════════════════════════════════════════════
-            "--concurrent-fragments", str(self.concurrent_fragments),  # ✅ Parallel downloads
+            "--concurrent-fragments", str(self.concurrent_fragments),  # ✅ 8x Parallel downloads
+            "--buffer-size", "16K",     # ✅ Network buffer optimization
             "--resize-buffer",          # ✅ Optimize disk I/O
             "--no-part",                # ✅ Don't use .part files
+            "--postprocessor-args", "ffmpeg:-threads 0",  # ✅ Turbo: Use ALL CPU cores
             
             # ═══════════════════════════════════════════════════════════════
-            # 🔒 SAFETY & CONSISTENCY
+            # 🌏 SAFETY & CONSISTENCY (Unicode-friendly)
             # ═══════════════════════════════════════════════════════════════
-            "--restrict-filenames",     # ✅ Safe filenames
             "--no-playlist",            # ✅ Single video only
             "--no-mtime",               # ✅ Don't set file modification time
             

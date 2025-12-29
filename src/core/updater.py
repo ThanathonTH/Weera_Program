@@ -1,12 +1,16 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                        UPDATER MODULE v2.0                                   ║
+║                        UPDATER MODULE v3.3.1 Stable Edition                    ║
 ║              Smart Version Control & Chained Update System                   ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  🧠 Smart Versioning - Check before download                                 ║
 ║  🔗 Chained Updates - App first, then yt-dlp                                ║
 ║  🔄 Swap & Restart - Self-update for .exe files                             ║
 ║  📞 Pure Logic - No GUI imports                                              ║
+║  🛡️ v4.0 Fixes:                                                              ║
+║     • English-only CMD messages (no encoding issues)                         ║
+║     • :LOOP_CHECK mechanism (handles file locking race conditions)          ║
+║     • Robust start command (supports paths with spaces)                      ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -393,45 +397,66 @@ def perform_app_update(
             
             batch_content = f'''@echo off
 chcp 65001 >nul
-echo ══════════════════════════════════════════
-echo   Infinity Downloader - Auto Update
-echo ══════════════════════════════════════════
+setlocal EnableDelayedExpansion
+
+echo ============================================
+echo   Infinity Downloader - Auto Update v4.0
+echo ============================================
 echo.
 
-:: Wait for app to close
-echo [1/4] รอให้โปรแกรมปิด...
+:: [1/4] Wait for app to close
+echo [1/4] Waiting for application to close...
 timeout /t 3 /nobreak >nul
 
 :: Try to kill process
 taskkill /f /im "{app_name}" 2>nul
 timeout /t 2 /nobreak >nul
 
-:: Copy files
-echo [2/4] ติดตั้งไฟล์ใหม่...
+:: [2/4] Install new files
+echo [2/4] Installing new files...
 robocopy "{source_dir}" "{app_dir}" /E /NFL /NDL /NJH /NJS /nc /ns /np 2>nul
 if errorlevel 8 (
     xcopy /s /e /y /q "{source_dir}\\*" "{app_dir}\\" 2>nul
 )
 
-:: Cleanup
-echo [3/4] ทำความสะอาด...
+:: [3/4] Cleanup
+echo [3/4] Cleaning up temporary files...
 rmdir /s /q "{extract_dir}" 2>nul
 del /f /q "{download_temp}" 2>nul
 
-:: Start app
-echo [4/4] เปิดโปรแกรม...
-if exist "{app_path}" (
+:: [4/4] Start app with LOOP_CHECK for file locking
+echo [4/4] Starting application...
+set "RETRY_COUNT=0"
+
+:LOOP_CHECK
+if not exist "{app_path}" (
     echo.
-    echo ════════════════════════════════════════
-    echo   ติดตั้งสำเร็จ! กำลังเปิดโปรแกรม...
-    echo ════════════════════════════════════════
-    timeout /t 2 /nobreak >nul
-    start "" "{app_path}" --post-update
-) else (
-    echo.
-    echo เกิดข้อผิดพลาดในการติดตั้ง
+    echo [ERROR] Application file not found!
+    echo         Path: {app_path}
     pause
+    goto :EOF
 )
+
+:: Test if file is accessible (not locked)
+ren "{app_path}" "{app_name}" 2>nul
+if errorlevel 1 (
+    set /a RETRY_COUNT+=1
+    if !RETRY_COUNT! GEQ 10 (
+        echo [WARNING] File still locked after 10 retries, attempting to start anyway...
+        goto :START_APP
+    )
+    echo    Waiting for file to be released... [Attempt !RETRY_COUNT!/10]
+    timeout /t 1 /nobreak >nul
+    goto :LOOP_CHECK
+)
+
+:START_APP
+echo.
+echo ============================================
+echo   Update Complete! Starting application...
+echo ============================================
+timeout /t 2 /nobreak >nul
+start "Infinity Downloader" /D "{app_dir}" "{app_path}" --post-update
 
 :: Delete self
 (goto) 2>nul & del "%~f0"
@@ -452,35 +477,66 @@ if exist "{app_path}" (
             
             batch_content = f'''@echo off
 chcp 65001 >nul
-echo กำลังอัปเดต... กรุณารอสักครู่
+setlocal EnableDelayedExpansion
+
+echo ============================================
+echo   Infinity Downloader - Auto Update v4.0
+echo ============================================
+echo.
+echo Updating... Please wait.
 echo.
 
 timeout /t 3 /nobreak >nul
 
-echo ลบไฟล์เก่า...
+echo [1/4] Terminating running application...
+taskkill /f /im "{app_name}" 2>nul
+timeout /t 2 /nobreak >nul
+
+:: LOOP_CHECK: Wait for file to be released
+set "RETRY_COUNT=0"
+
+:LOOP_CHECK
+echo [2/4] Checking file lock status...
 del /f /q "{app_path}" 2>nul
 
 if exist "{app_path}" (
-    echo พยายามปิดโปรแกรม...
+    set /a RETRY_COUNT+=1
+    if !RETRY_COUNT! GEQ 15 (
+        echo.
+        echo [ERROR] Failed to remove old file after 15 attempts.
+        echo         The file may be locked by another process.
+        echo         Please close any related applications and try again.
+        pause
+        goto :EOF
+    )
+    echo    File is still locked. Waiting... [Attempt !RETRY_COUNT!/15]
+    timeout /t 1 /nobreak >nul
     taskkill /f /im "{app_name}" 2>nul
-    timeout /t 2 /nobreak >nul
-    del /f /q "{app_path}" 2>nul
+    goto :LOOP_CHECK
 )
 
-echo ติดตั้งเวอร์ชันใหม่...
+echo    File lock released successfully.
+echo.
+
+echo [3/4] Installing new version...
 move /y "{new_app_path}" "{app_path}"
 
-if exist "{app_path}" (
+if not exist "{app_path}" (
     echo.
-    echo ติดตั้งสำเร็จ! กำลังเปิดโปรแกรม...
-    timeout /t 1 /nobreak >nul
-    start "" "{app_path}" --post-update
-) else (
-    echo.
-    echo เกิดข้อผิดพลาดในการติดตั้ง
+    echo [ERROR] Installation failed! New file not found.
     pause
+    goto :EOF
 )
 
+echo [4/4] Starting application...
+echo.
+echo ============================================
+echo   Update Complete! Starting application...
+echo ============================================
+timeout /t 2 /nobreak >nul
+start "Infinity Downloader" /D "{app_dir}" "{app_path}" --post-update
+
+:: Delete self
 (goto) 2>nul & del "%~f0"
 '''
         

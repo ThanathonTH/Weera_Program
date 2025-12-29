@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                  INFINITY MP3 DOWNLOADER v4.0                                ║
+║                  INFINITY MP3 DOWNLOADER v3.3.1                                ║
 ║                 Main Application (CustomTkinter GUI)                          ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║  🚀 Package-Based Architecture                                                ║
