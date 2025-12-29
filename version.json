@@ -1,6 +1,6 @@
 {
-    "version": "3.2.0",
-    "download_url": "https://github.com/ThanathonTH/Weera_Program/releases/download/v3.2.0/InfinityDownloader.exe",
-    "changelog": "- เพิ่มเมนูคลิกขวา Copy/Paste\n- แก้ปัญหา Ctrl+C/V ภาษาไทย\n",
-    "release_notes": "Major Update v3.2.0 - Fixed Link"
+    "version": "3.3.0",
+    "download_url": "https://github.com/ThanathonTH/Weera_Program/releases/download/v3.3.0/InfinityDownloader.exe",
+    "changelog": "- 🚀 ยกเครื่องโครงสร้างใหม่ (Modular Architecture) เสถียรและลื่นขึ้น\n- ⚡ เร่งความเร็วดาวน์โหลด 4 เท่า (Parallel Fragments)\n- 🔧 แก้บั๊ก Copy/Paste ภาษาไทย และเพิ่มเมนูคลิกขวา\n- 📦 ปรับปรุงระบบอัปเดตใหม่ (Smart Engine)",
+    "release_notes": "Major Update v3.3.0 - Performance & Architecture Overhaul"
 }
